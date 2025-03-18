@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"time"
 )
 
 func encryptAES(text string, key []byte) (string, error) {
@@ -63,24 +64,30 @@ func decryptAES(ciphertext string, key []byte) (string, error) {
 }
 
 func main() {
-	key := []byte("thedocumentationsaysthatineed32b") //32-byte key for AES-256
+	key := []byte("thedocumentationsaysthatineed32b") // 32-byte key for AES-256
 
 	text := "This is message will be encrypted with AES."
 	fmt.Println("Original:", text)
 
+	start := time.Now()
 	encrypted, err := encryptAES(text, key)
+	aesEncDuration := time.Since(start)
 	if err != nil {
 		fmt.Println("AES Encryption error:", err)
 		return
 	}
 	fmt.Println("Encrypted AES:", encrypted)
+	fmt.Println("AES Encryption Time:", aesEncDuration)
 
+	start = time.Now()
 	decrypted, err := decryptAES(encrypted, key)
+	aesDecDuration := time.Since(start)
 	if err != nil {
 		fmt.Println("AES Decryption error:", err)
 		return
 	}
 	fmt.Println("Decrypted AES:", decrypted)
+	fmt.Println("AES Decryption Time:", aesDecDuration)
 
 	text2 := []byte("And this one will be encrypted with RSA.")
 	fmt.Println("Original:", string(text2))
@@ -91,18 +98,23 @@ func main() {
 	}
 	publicKey := privateKey.PublicKey
 
+	start = time.Now()
 	encryptedBytes, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &publicKey, text2, nil)
+	rsaEncDuration := time.Since(start)
 	if err != nil {
 		fmt.Println("RSA Encryption error:", err)
 		panic(err)
 	}
-	fmt.Println("RSA Encrypted: ", encryptedBytes)
+	fmt.Println("RSA Encrypted: ", base64.StdEncoding.EncodeToString(encryptedBytes))
+	fmt.Println("RSA Encryption Time:", rsaEncDuration)
 
+	start = time.Now()
 	decryptedBytes, err := privateKey.Decrypt(nil, encryptedBytes, &rsa.OAEPOptions{Hash: crypto.SHA256})
+	rsaDecDuration := time.Since(start)
 	if err != nil {
 		fmt.Println("RSA Decryption error:", err)
 		panic(err)
 	}
 	fmt.Println("RSA Decrypted: ", string(decryptedBytes))
-
+	fmt.Println("RSA Decryption Time:", rsaDecDuration)
 }
