@@ -7,114 +7,228 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"time"
 )
 
-func encryptAES(text string, key []byte) (string, error) {
+const rsaChunkSize = 190 // Max data size for 2048-bit RSA with OAEP (SHA-256)
+
+func encryptAESFile(inputFile, outputFile string, key []byte) error {
+	in, err := os.Open(inputFile)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
+		return err
+	}
+	if _, err := out.Write(nonce); err != nil {
+		return err
 	}
 
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	ciphertext := aesGCM.Seal(nonce, nonce, []byte(text), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	buffer := make([]byte, 1024)
+	for {
+		n, err := in.Read(buffer)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+
+		ciphertext := aesGCM.Seal(nil, nonce, buffer[:n], nil)
+		if _, err := out.Write(ciphertext); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func decryptAES(ciphertext string, key []byte) (string, error) {
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
+func decryptAESFile(inputFile, outputFile string, key []byte) error {
+	in, err := os.Open(inputFile)
 	if err != nil {
-		return "", err
+		return err
 	}
+	defer in.Close()
+
+	out, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	nonceSize := aesGCM.NonceSize()
-	if len(data) < nonceSize {
-		return "", fmt.Errorf("ciphertext too short")
+	nonce := make([]byte, nonceSize)
+	if _, err := in.Read(nonce); err != nil {
+		return err
 	}
 
-	nonce, encryptedText := data[:nonceSize], data[nonceSize:]
-	text, err := aesGCM.Open(nil, nonce, encryptedText, nil)
+	buffer := make([]byte, 1040)
+	for {
+		n, err := in.Read(buffer)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+
+		plaintext, err := aesGCM.Open(nil, nonce, buffer[:n], nil)
+		if err != nil {
+			return err
+		}
+		if _, err := out.Write(plaintext); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func encryptRSAFile(inputFile, outputFile string, publicKey *rsa.PublicKey) error {
+	in, err := os.ReadFile(inputFile)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	return string(text), nil
+	out, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	for i := 0; i < len(in); i += rsaChunkSize {
+		end := i + rsaChunkSize
+		if end > len(in) {
+			end = len(in)
+		}
+
+		ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, publicKey, in[i:end], nil)
+		if err != nil {
+			return err
+		}
+
+		chunkSize := uint16(len(ciphertext))
+		binary.Write(out, binary.LittleEndian, chunkSize)
+		out.Write(ciphertext)
+	}
+
+	return nil
+}
+
+func decryptRSAFile(inputFile, outputFile string, privateKey *rsa.PrivateKey) error {
+	in, err := os.Open(inputFile)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	for {
+		var chunkSize uint16
+		err := binary.Read(in, binary.LittleEndian, &chunkSize)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		ciphertext := make([]byte, chunkSize)
+		_, err = in.Read(ciphertext)
+		if err != nil {
+			return err
+		}
+
+		plaintext, err := privateKey.Decrypt(nil, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
+		if err != nil {
+			return err
+		}
+
+		out.Write(plaintext)
+	}
+
+	return nil
 }
 
 func main() {
 	key := []byte("thedocumentationsaysthatineed32b") // 32-byte key for AES-256
 
-	text := "This is message will be encrypted with AES."
-	fmt.Println("Original:", text)
+	inputFile := "input.bin"
+	encryptedFile := "aesencrypted.txt"
+	decryptedFile := "aesdecrypted.txt"
 
 	start := time.Now()
-	encrypted, err := encryptAES(text, key)
-	aesEncDuration := time.Since(start)
-	if err != nil {
-		fmt.Println("AES Encryption error:", err)
+	if err := encryptAESFile(inputFile, encryptedFile, key); err != nil {
+		fmt.Println("AES File Encryption error:", err)
 		return
 	}
-	fmt.Println("Encrypted AES:", encrypted)
-	fmt.Println("AES Encryption Time:", aesEncDuration)
+	fmt.Println("AES File Encryption Time:", time.Since(start))
 
 	start = time.Now()
-	decrypted, err := decryptAES(encrypted, key)
-	aesDecDuration := time.Since(start)
-	if err != nil {
-		fmt.Println("AES Decryption error:", err)
+	if err := decryptAESFile(encryptedFile, decryptedFile, key); err != nil {
+		fmt.Println("AES File Decryption error:", err)
 		return
 	}
-	fmt.Println("Decrypted AES:", decrypted)
-	fmt.Println("AES Decryption Time:", aesDecDuration)
-
-	text2 := []byte("And this one will be encrypted with RSA.")
-	fmt.Println("Original:", string(text2))
+	fmt.Println("AES File Decryption Time:", time.Since(start))
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(err)
 	}
-	publicKey := privateKey.PublicKey
+	publicKey := &privateKey.PublicKey
+
+	rsaEncryptedFile := "rsaencrypted.txt"
+	rsaDecryptedFile := "rsadecrypted.txt"
 
 	start = time.Now()
-	encryptedBytes, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &publicKey, text2, nil)
-	rsaEncDuration := time.Since(start)
-	if err != nil {
-		fmt.Println("RSA Encryption error:", err)
-		panic(err)
+	if err := encryptRSAFile(inputFile, rsaEncryptedFile, publicKey); err != nil {
+		fmt.Println("RSA File Encryption error:", err)
+		return
 	}
-	fmt.Println("RSA Encrypted: ", base64.StdEncoding.EncodeToString(encryptedBytes))
-	fmt.Println("RSA Encryption Time:", rsaEncDuration)
+	fmt.Println("RSA File Encryption Time:", time.Since(start))
 
 	start = time.Now()
-	decryptedBytes, err := privateKey.Decrypt(nil, encryptedBytes, &rsa.OAEPOptions{Hash: crypto.SHA256})
-	rsaDecDuration := time.Since(start)
-	if err != nil {
-		fmt.Println("RSA Decryption error:", err)
-		panic(err)
+	if err := decryptRSAFile(rsaEncryptedFile, rsaDecryptedFile, privateKey); err != nil {
+		fmt.Println("RSA File Decryption error:", err)
+		return
 	}
-	fmt.Println("RSA Decrypted: ", string(decryptedBytes))
-	fmt.Println("RSA Decryption Time:", rsaDecDuration)
+	fmt.Println("RSA File Decryption Time:", time.Since(start))
 }
