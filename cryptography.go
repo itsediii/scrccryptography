@@ -184,8 +184,22 @@ func decryptRSAFile(inputFile, outputFile string, privateKey *rsa.PrivateKey) er
 
 		out.Write(plaintext)
 	}
-
 	return nil
+}
+
+func hashFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return nil, err
+	}
+
+	return hasher.Sum(nil), nil
 }
 
 func main() {
@@ -209,6 +223,24 @@ func main() {
 	}
 	fmt.Println("AES File Decryption Time:", time.Since(start))
 
+	hash1, err := hashFile(decryptedFile)
+	if err != nil {
+		fmt.Println("Error hashing decrypted file:", err)
+		return
+	}
+
+	hash2, err := hashFile(inputFile)
+	if err != nil {
+		fmt.Println("Error hashing input file:", err)
+		return
+	}
+
+	if string(hash1) == string(hash2) {
+		fmt.Println("Decrypted AES file matches the original.")
+	} else {
+		fmt.Println("Decrypted AES file does not match the original.")
+	}
+
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		panic(err)
@@ -231,4 +263,23 @@ func main() {
 		return
 	}
 	fmt.Println("RSA File Decryption Time:", time.Since(start))
+
+	hash1, err = hashFile(decryptedFile)
+	if err != nil {
+		fmt.Println("Error hashing decrypted file:", err)
+		return
+	}
+
+	hash2, err = hashFile(inputFile)
+	if err != nil {
+		fmt.Println("Error hashing input file:", err)
+		return
+	}
+
+	if string(hash1) == string(hash2) {
+		fmt.Println("Decrypted RSA file matches the original.")
+	} else {
+		fmt.Println("Decrypted RSA file does not match the original.")
+	}
+
 }
